@@ -5,11 +5,30 @@ import numpy as np
 import ssl
 import xmlrpc.client
 import pandas as pd
+import plotly.graph_objects as go
+import json
+
 
 ODOO_URL = 'https://quiron.centralus.cloudapp.azure.com/'  # o 'http://localhost:8069'
 ODOO_DB = 'quiron_odoo'
 ODOO_USERNAME = 'admin'
 ODOO_PASSWORD = 'admin'
+
+# Diccionario para abreviaciones en español
+meses_es = {
+    1: "Ene",
+    2: "Feb",
+    3: "Mar",
+    4: "Abr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Ago",
+    9: "Sep",
+    10: "Oct",
+    11: "Nov",
+    12: "Dic"
+}
 
 # Desactivamos la verificación SSL sólo si es necesario
 ssl_context = ssl._create_unverified_context()
@@ -41,6 +60,7 @@ def get_api_data_odoo(start_date, end_date, selected_type):
     :param selected_type: str en ['programacion', 'ejecucion', 'soportes', 'facturacion']
     :return: pd.DataFrame
     """
+    
     # Conexión a Odoo
     common, uid, models = get_odoo_connection()
 
@@ -244,7 +264,7 @@ def get_api_data_odoo(start_date, end_date, selected_type):
     return df
 
 
-def get_api_data(start_date, end_date, selected_type):
+def get_api_data_dummy(start_date, end_date, selected_type):
     # Datos de ejemplo "hardcodeados" para simular la respuesta de la API
     # Número de muestras
     num_samples = 100
@@ -279,6 +299,28 @@ def get_api_data(start_date, end_date, selected_type):
     # Filtrar los datos según el rango de fechas y el tipo seleccionado
     df = df[(df['date'] >= pd.to_datetime(start_date)) & (df['date'] <= pd.to_datetime(end_date))]
     df = df[df['type'] == selected_type]
+    return df
+
+def get_api_data(start_date, end_date, selected_type):
+    # 1. Cargar el JSON local
+    with open("data.json", "r", encoding="utf-8") as f:
+        data_list = json.load(f)
+
+    # 2. Crear DataFrame
+    df = pd.DataFrame(data_list)
+
+    # 3. Convertir 'date' a datetime con inferencia de formatos (fecha u hora)
+    df['date'] = pd.to_datetime(df['date'], infer_datetime_format=True, errors='coerce')
+
+    # 4. Filtrar rango de fechas
+    df = df[
+        (df['date'] >= pd.to_datetime(start_date)) &
+        (df['date'] <= pd.to_datetime(end_date))
+    ]
+
+    # 5. Filtrar por tipo
+    df = df[df['type'] == selected_type]
+
     return df
 
 
@@ -319,7 +361,7 @@ with tabs[0]:
 
     # Obtener los datos "desde la API" (mock)
     df = get_api_data(start_date, end_date, selected_type)
-    df['month'] = df['date'].dt.to_period('M').astype(str)
+    df['month'] = df['date'].dt.month.apply(lambda x: meses_es[x])
 
     # --- Gráfica 1: Total por Mes/Psicólogo con valores encima ---
     if grouping_option == "Mes":
@@ -330,7 +372,7 @@ with tabs[0]:
                     color='executor', 
                     barmode='group',
                     text=metric_col,
-                    labels={metric_col: "Total", "month": "Mes"},
+                    labels={metric_col: "Total", "month": "Mes",  "executor": "Psicólogo"},
                     title=f"Total por Mes y Psicólogo ({metric_option if selected_type=='facturacion' else 'Horas'})")
         fig1.add_hline(y=meta_value, line_dash="dot", 
                         annotation_text=f"Meta {meta_value}", annotation_position="top right")
@@ -341,12 +383,13 @@ with tabs[0]:
                     y=metric_col, 
                     color='month', 
                     barmode='group',
-                    text=metric_col,
-                    labels={metric_col: "Total", "executor": "Psicólogo"},
+                    text=metric_col ,
+                    labels={metric_col: "Total", "executor": "Psicólogo",  "month": "Mes"},
                     title=f"Total por Psicólogo y Mes ({metric_option if selected_type=='facturacion' else 'Horas'})")
         fig1.add_hline(y=meta_value, line_dash="dot", 
                         annotation_text=f"Meta {meta_value}", annotation_position="top right")
-    fig1.update_traces(texttemplate='%{text}')
+    
+    fig1.update_traces(texttemplate='%{text}', textposition='outside')
     st.plotly_chart(fig1)
 
     # --- Gráfica 2: Porcentaje respecto a la meta ---
@@ -376,33 +419,80 @@ with tabs[0]:
     fig2.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
     st.plotly_chart(fig2)
 
-    # --- Gráfica 3: Total general por Psicólogo ---
-    total_general = df.groupby('executor', as_index=False)[metric_col].sum()
-    fig3 = px.bar(total_general, 
-                x=metric_col, 
-                y='executor', 
-                orientation='h',
-                text=metric_col,
-                labels={metric_col: "Total", "executor": "Psicólogo"},
-                title=f"Total General por Psicólogo ({metric_option if selected_type=='facturacion' else 'Horas'})")
-    fig3.update_traces(texttemplate='%{text}', textposition='outside')
-    st.plotly_chart(fig3)   
-
-
+    meta_data = [
+        {'month': 'Ene', 'meta': 100},  # O "2025-01" si tu mes está en ese formato
+        {'month': 'Feb', 'meta': 120},
+        {'month': 'Mar', 'meta': 110},
+    # Agrega más filas si tienes más meses
+    ]
+    meta_df = pd.DataFrame(meta_data)
+    # 2. Unir (merge) las metas con el total real mes a mes
     # --- Gráfica 3: Total general mes a mes (sin discriminar por psicólogo y con línea de meta que varía mes a mes) ---
     total_mes = df.groupby('month', as_index=False)[metric_col].sum()
-    fig4 = px.bar(total_mes,
-                x='month',
-                y=metric_col,
-                labels={'month': 'Mes', metric_col: f"Total ({metric_option})"},
-                title=f"Total ({metric_option}) por Mes")
-    fig4.add_hline(
-        y=meta_value,
-        line_dash="dot",
-        annotation_text=f"Meta {meta_value}",
-        annotation_position="top right"
+    merged = pd.merge(total_mes, meta_df, on='month', how='left')
+
+    # --- Gráfica combinada ---
+    # 1) Graficar la barra con px.bar
+    fig4 = px.bar(
+        total_mes,
+        x='month',
+        y=metric_col,
+        labels={'month': 'Mes', metric_col: f"Total ({metric_option})"},
+        title=f"Total ({metric_option}) vs Meta por Mes",
+        text=metric_col
     )
+    # 2) Añadir la traza tipo línea para la meta
+    fig4.add_trace(
+        go.Scatter(
+            x=meta_df['month'],
+            y=meta_df['meta'],
+            mode='lines+markers',
+            name='Meta'  # Nombre que saldrá en la leyenda
+        )
+    )
+
     st.plotly_chart(fig4)
+
+    # resumen de horas
+    # --- Gráfica FINAL: Comparación de Totales por Tipo (programación, ejecución, soportes y facturación) ---
+    st.subheader("Distribución del progreso")
+
+    # Definimos qué tipos vamos a graficar
+    all_types = ['programacion', 'ejecucion', 'soportes', 'facturacion']
+
+    # Preparamos un diccionario para guardar las sumas de cada tipo
+    type_totals = {}
+
+    for t in all_types:
+        # Para cada tipo, volvemos a pedir los datos según el rango seleccionado
+        df_temp = get_api_data(start_date, end_date, t)
+        
+        col_to_sum = 'hours_quantity'
+        
+        total_val = df_temp[col_to_sum].sum()
+        
+        # Guardamos en el diccionario, para luego armar un DataFrame
+        # Ponemos un nombre "amigable" con .capitalize() o tú lo cambias a tu gusto
+        type_totals[t.capitalize()] = total_val
+
+    # Convertimos el diccionario en DataFrame para graficar
+    df_type_totals = pd.DataFrame({
+        'Tipo': list(type_totals.keys()),
+        'Total': list(type_totals.values())
+    })
+
+    # Graficamos con Plotly Express
+    fig_final = px.bar(
+        df_type_totals, 
+        x='Tipo', 
+        y='Total', 
+        text='Total',
+        labels={'Tipo': 'Tipo', 'Total': 'Total'},
+        title='Comparativa de Tipos en el Rango Seleccionado'
+    )
+    fig_final.update_traces(texttemplate='%{text}', textposition='outside')
+    st.plotly_chart(fig_final)  
+
 
 
 # ---------------------------
@@ -427,27 +517,26 @@ with tabs[1]:
         metric_option_emp = st.radio("Ver por:", options=["Horas", "Monto"], key="radio_emp")
         if metric_option_emp == "Horas":
             metric_col_emp = "hours_quantity"
-            meta_value_emp = 120
         else:
             metric_col_emp = "amount"
-            meta_value_emp = 1000
     else:
         metric_option_emp = "Horas"
         metric_col_emp = "hours_quantity"
-        meta_value_emp = 120
     
     # 3) Seleccionar la empresa a consultar
-    company_options = ["EmpresaA", "EmpresaB", "EmpresaC"]
+    df_emp = get_api_data(start_date_emp, end_date_emp, selected_type_emp)
+    company_options = df_emp['company'].unique()
     selected_company = st.selectbox("Empresa", company_options, key="company")
     
     st.subheader(f"Reporte de {selected_type_emp} para {selected_company}")
     
     # 4) Obtener los datos "desde la API" y filtrar solo la empresa
-    df_emp = get_api_data(start_date_emp, end_date_emp, selected_type_emp)
+
     df_emp = df_emp[df_emp['company'] == selected_company]
     
     # Nueva columna "month" para agrupar por mes si queremos
-    df_emp['month'] = df_emp['date'].dt.to_period('M').astype(str)
+    df_emp['month'] = df['date'].dt.month.apply(lambda x: meses_es[x])
+
     
     # --- Gráfica 1: Totales por Mes (sin mostrar psicólogos) ---
     grouped_emp = df_emp.groupby('month', as_index=False)[metric_col_emp].sum()
@@ -459,31 +548,9 @@ with tabs[1]:
         labels={'month': 'Mes', metric_col_emp: f"Total ({metric_option_emp})"},
         title=f"Total ({metric_option_emp}) por Mes - {selected_company}"
     )
-    fig_emp_1.add_hline(
-        y=meta_value_emp, 
-        line_dash="dot", 
-        annotation_text=f"Meta {meta_value_emp}", 
-        annotation_position="top right"
-    )
+
     st.plotly_chart(fig_emp_1)
     
-    # --- Gráfica 2: Porcentaje respecto a la meta (por Mes) ---
-    grouped_emp['percentage'] = grouped_emp[metric_col_emp] / meta_value_emp * 100
-    
-    fig_emp_2 = px.bar(
-        grouped_emp,
-        x='month',
-        y='percentage',
-        labels={'month': 'Mes', 'percentage': 'Porcentaje respecto a meta (%)'},
-        title=f"Porcentaje de Meta por Mes - {selected_company}"
-    )
-    fig_emp_2.add_hline(
-        y=100,
-        line_dash="dot",
-        annotation_text="Meta 100%",
-        annotation_position="top right"
-    )
-    st.plotly_chart(fig_emp_2)
     
     # --- Gráfica 3: Total general en el período seleccionado ---
     total_emp = df_emp[metric_col_emp].sum()  # Suma total en todo el período
@@ -499,6 +566,49 @@ with tabs[1]:
         title=f"Total {metric_option_emp} (Período seleccionado)"
     )
     st.plotly_chart(fig_emp_3)
+
+    st.subheader("Distribución del progreso")
+
+    # Definimos qué tipos vamos a graficar
+    all_types = ['programacion', 'ejecucion', 'soportes', 'facturacion']
+
+    # Preparamos un diccionario para guardar las sumas de cada tipo
+    type_totals = {}
+
+    for t in all_types:
+        # Para cada tipo, volvemos a pedir los datos según el rango seleccionado
+        df_temp = get_api_data(start_date, end_date, t)
+
+        # filter by company
+        df_temp = df_temp[df_temp['company'] == selected_company]
+        
+        col_to_sum = 'hours_quantity'
+        
+        total_val = df_temp[col_to_sum].sum()
+        
+        # Guardamos en el diccionario, para luego armar un DataFrame
+        # Ponemos un nombre "amigable" con .capitalize() o tú lo cambias a tu gusto
+        type_totals[t.capitalize()] = total_val
+
+    # Convertimos el diccionario en DataFrame para graficar
+    df_type_totals = pd.DataFrame({
+        'Tipo': list(type_totals.keys()),
+        'Total': list(type_totals.values())
+    })
+
+    # Graficamos con Plotly Express
+    fig_final = px.bar(
+        df_type_totals, 
+        x='Tipo', 
+        y='Total', 
+        text='Total',
+        labels={'Tipo': 'Tipo', 'Total': 'Total'},
+        title='Comparativa de Tipos en el Rango Seleccionado'
+    )
+    fig_final.update_traces(texttemplate='%{text}', textposition='outside')
+    st.plotly_chart(fig_final)  
+
+
 # --------------------------------
 # Pestaña [2]: INDICADORES CLIENTE
 # --------------------------------
@@ -515,14 +625,11 @@ with tabs[2]:
         metric_option_cli = st.radio("Ver por:", options=["Horas", "Monto"], key="radio_cli")
         if metric_option_cli == "Horas":
             metric_col_cli = "hours_quantity"
-            meta_value_cli = 120
         else:
             metric_col_cli = "amount"
-            meta_value_cli = 1000
     else:
         metric_option_cli = "Horas"
         metric_col_cli = "hours_quantity"
-        meta_value_cli = 120
 
     st.subheader(f"Reporte de {selected_type_cli} por Cliente")
     grouping_option_cli = st.radio("Agrupar en eje X por:", options=["Mes", "Cliente/Tipo"], key="group_cli")
@@ -530,7 +637,10 @@ with tabs[2]:
     df_cli = get_api_data(start_date_cli, end_date_cli, selected_type_cli)
     # Nueva columna: si client_type es "ARL", se usa el valor de client; si no, se usa client_type.
     df_cli['group_client'] = df_cli.apply(lambda row: row['client'] if row['client_type'] == 'ARL' else row['client_type'], axis=1)
-    df_cli['month'] = df_cli['date'].dt.to_period('M').astype(str)
+    # df_cli['month'] = df_cli['date'].dt.to_period('M').astype(str)
+
+    df_cli['month'] = df['date'].dt.month.apply(lambda x: meses_es[x])
+
     
     # --- Gráfica 1 ---
     if grouping_option_cli == "Mes":
@@ -542,8 +652,6 @@ with tabs[2]:
                           barmode='group',
                           labels={metric_col_cli: f"Total ({metric_option_cli})", 'month': 'Mes'},
                           title=f"{metric_option_cli} Totales por Mes y Cliente/Tipo")
-        fig1_cli.add_hline(y=meta_value_cli, line_dash="dot", 
-                           annotation_text=f"Meta {meta_value_cli}", annotation_position="top right")
     else:
         grouped_cli = df_cli.groupby(['group_client', 'month'], as_index=False)[metric_col_cli].sum()
         fig1_cli = px.bar(grouped_cli,
@@ -553,34 +661,9 @@ with tabs[2]:
                           barmode='group',
                           labels={metric_col_cli: f"Total ({metric_option_cli})", 'group_client': 'Cliente/Tipo'},
                           title=f"{metric_option_cli} Totales por Cliente/Tipo y Mes")
-        fig1_cli.add_hline(y=meta_value_cli, line_dash="dot", 
-                           annotation_text=f"Meta {meta_value_cli}", annotation_position="top right")
     st.plotly_chart(fig1_cli)
     
-    # --- Gráfica 2: Porcentaje respecto a la meta ---
-    grouped_cli['percentage'] = grouped_cli[metric_col_cli] / meta_value_cli * 100
-    if grouping_option_cli == "Mes":
-        fig2_cli = px.bar(grouped_cli,
-                          x='month',
-                          y='percentage',
-                          color='group_client',
-                          barmode='group',
-                          labels={'percentage': 'Porcentaje respecto a meta (%)', 'month': 'Mes'},
-                          title="Porcentaje de Meta por Mes y Cliente/Tipo")
-        fig2_cli.add_hline(y=100, line_dash="dot", 
-                           annotation_text="Meta 100%", annotation_position="top right")
-    else:
-        fig2_cli = px.bar(grouped_cli,
-                          x='group_client',
-                          y='percentage',
-                          color='month',
-                          barmode='group',
-                          labels={'percentage': 'Porcentaje respecto a meta (%)', 'group_client': 'Cliente/Tipo'},
-                          title="Porcentaje de Meta por Cliente/Tipo y Mes")
-        fig2_cli.add_hline(y=100, line_dash="dot", 
-                           annotation_text="Meta 100%", annotation_position="top right")
-    st.plotly_chart(fig2_cli)
-    
+
     # --- Gráfica 3: Total general ---
     total_cli = df_cli.groupby('group_client', as_index=False)[metric_col_cli].sum()
     fig3_cli = px.bar(total_cli,
@@ -591,19 +674,64 @@ with tabs[2]:
                       title=f"Total {metric_option_cli} por Cliente/Tipo")
     st.plotly_chart(fig3_cli)
 
+        # --- GRÁFICA EXTRA: COMPARACIÓN POR CLIENTE DE 4 TIPOS (PROGRAMACIÓN, EJECUCIÓN, SOPORTES, FACTURACIÓN) ---
+    st.subheader("Comparación de Totales (Programación, Ejecución, Soportes, Facturación) por Cliente")
 
-# Botón de imprimir usando HTML y JavaScript (para todas las pestañas)
-st.markdown("""
-    <style>
-    .print-button {
-        background-color: #4CAF50;
-        color: white;
-        padding: 8px 16px;
-        border: none;
-        cursor: pointer;
-        font-size: 16px;
-    }
-    </style>
-    <button class="print-button" onclick="window.print()">Imprimir</button>
-    """, unsafe_allow_html=True)
+    # 1) Definimos la lista de tipos a comparar
+    tipos = ['programacion', 'ejecucion', 'soportes', 'facturacion']
+
+    # 2) Creamos una lista para ir acumulando los DF individuales
+    dfs_list = []
+
+    for t in tipos:
+        # Llamamos a la API para cada tipo, usando el mismo rango de fechas
+        df_temp = get_api_data(start_date_cli, end_date_cli, t).copy()
+        
+        # Aplicamos la misma lógica de 'group_client'
+        df_temp['group_client'] = df_temp.apply(
+            lambda row: row['client'] if row['client_type'] == 'ARL' else row['client_type'], 
+            axis=1
+        )
+        
+        # Decidimos qué columna sumar
+        # - Si es facturación, usamos lo que haya seleccionado el usuario (Horas o Monto)
+        # - Para los demás (programación, ejecución, soportes), usamos hours_quantity
+        if t == 'facturacion':
+            col_to_sum = metric_col_cli  # hours_quantity o amount, según radio del usuario
+        else:
+            col_to_sum = 'hours_quantity'
+        
+        # Agrupamos por cliente y sumamos la columna correspondiente
+        grouped_t = df_temp.groupby('group_client', as_index=False)[col_to_sum].sum()
+        
+        # Renombramos la columna a un nombre genérico (p.ej. 'value') para unificar
+        grouped_t.rename(columns={col_to_sum: 'value'}, inplace=True)
+        
+        # Añadimos una columna 'tipo' para identificar de cuál de los 4 tipos proviene
+        grouped_t['tipo'] = t.capitalize()  # O usa t en español si prefieres
+        
+        # Acumulamos este DF en la lista
+        dfs_list.append(grouped_t)
+
+    # 3) Concatenamos todos los DF en uno solo
+    df_all_types = pd.concat(dfs_list, ignore_index=True)  
+    # => Columnas finales: [group_client, value, tipo]
+
+    # 4) Graficamos: barra agrupada (cada cliente tiene 4 barras)
+    fig_cli_compare = px.bar(
+        df_all_types,
+        x='group_client',
+        y='value',
+        color='tipo',
+        barmode='group',
+        labels={
+            'group_client': 'Cliente/Tipo', 
+            'value': 'Total (Horas/Monto)', 
+            'tipo': 'Tipo'
+        },
+        title='Comparación por Cliente: Programación, Ejecución, Soportes, Facturación'
+    )
+    st.plotly_chart(fig_cli_compare)
+
+
 
