@@ -33,274 +33,6 @@ meses_es = {
 # Desactivamos la verificación SSL sólo si es necesario
 ssl_context = ssl._create_unverified_context()
 
-def get_odoo_connection():
-    """
-    Devuelve (common, uid, models) para interactuar con Odoo vía XML-RPC.
-    """
-    common = xmlrpc.client.ServerProxy(
-        f'{ODOO_URL}xmlrpc/2/common',
-        context=ssl_context
-    )
-    uid = common.authenticate(ODOO_DB, ODOO_USERNAME, ODOO_PASSWORD, {})
-    models = xmlrpc.client.ServerProxy(
-        f'{ODOO_URL}xmlrpc/2/object',
-        context=ssl_context
-    )
-    return common, uid, models
-
-def get_api_data_odoo(start_date, end_date, selected_type):
-    """
-    Retorna un DataFrame con las columnas:
-    ['date', 'order_name', 'execution_type', 'executor', 'hours_quantity',
-     'observation', 'company', 'client', 'client_type', 'type', 'amount']
-    filtrado por la fecha y el 'selected_type'.
-    
-    :param start_date: datetime.date o string 'YYYY-MM-DD' inicio
-    :param end_date: datetime.date o string 'YYYY-MM-DD' fin
-    :param selected_type: str en ['programacion', 'ejecucion', 'soportes', 'facturacion']
-    :return: pd.DataFrame
-    """
-    
-    # Conexión a Odoo
-    common, uid, models = get_odoo_connection()
-
-    # Mapeo: el "selected_type" de la app vs. el modelo Odoo y campo de fecha
-    # -----------------------------------------------------------------------
-    #  programacion -> so.programming (filtrar por activity_date)
-    #  ejecucion    -> so.register    (filtrar por execution_date)
-    #  soportes     -> so.execution   (filtrar por execution_date)
-    #  facturacion  -> so.billing     (filtrar por billing_date)
-    #
-    # hours_quantity -> 
-    #   * programacion: hours_quantity
-    #   * ejecucion   : hours_quantity
-    #   * soportes    : hours_quantity
-    #   * facturacion : quantity (renombrar a hours_quantity = quantity)
-    #
-    # amount ->
-    #   * facturacion: total
-    #   * si no es facturación: 0
-    #
-    # date ->
-    #   * programacion: activity_date
-    #   * ejecucion   : execution_date (Date)
-    #   * soportes    : execution_date (Datetime)
-    #   * facturacion : billing_date
-    #
-
-    if selected_type == "programacion":
-        odoo_model = "so.programming"
-        date_field = "activity_date"
-        hours_field = "hours_quantity"  # float
-        amount_field = None
-    elif selected_type == "ejecucion":
-        odoo_model = "so.register"
-        date_field = "execution_date"
-        hours_field = "hours_quantity"
-        amount_field = None
-    elif selected_type == "soportes":
-        odoo_model = "so.execution"
-        date_field = "execution_date"
-        hours_field = "hours_quantity"
-        amount_field = None
-    elif selected_type == "facturacion":
-        odoo_model = "so.billing"
-        date_field = "billing_date"
-        hours_field = "quantity"
-        amount_field = "total"
-    else:
-        # Caso de seguridad; si llega un tipo desconocido, retornar DF vacío
-        return pd.DataFrame(columns=[
-            "date", "order_name", "execution_type", "executor", "hours_quantity",
-            "observation", "company", "client", "client_type", "type", "amount"
-        ])
-
-    # Dominio (filtro) para las fechas
-    # date_field >= start_date and date_field <= end_date
-    domain = [
-        (date_field, '>=', str(start_date)),
-        (date_field, '<=', str(end_date)),
-    ]
-
-    # Campos que queremos leer directamente en la "search_read"
-    # - order_id.* se requiere si Odoo lo soporta en la misma lectura.
-    fields_to_read = [
-        'id',
-        date_field,
-        # Para order_id, si Odoo 14+ normalmente no hace la lectura anidada a order_id.xxx
-        # pero ponemos 'order_id' para obtener (id, name). 
-        'order_id',
-        # En cada modelo existen varios, por ejemplo en "so.execution" hay "execution_type", etc.
-        # Ponemos todos para luego mapearlos manualmente:
-        'execution_type',      # en so.execution o so.register
-        'hours_quantity',      # en so.execution, so.register, so.programming
-        'quantity',            # en so.billing
-        'total',               # en so.billing
-        'concept',             # en so.programming
-        'status',              # en so.programming
-        'observation',         # en so.execution, so.register
-    ]
-    # No olvides que si Odoo no encuentra esos campos, podría dar error.  
-    # Puedes modularizar según el modelo. Este es un ejemplo genérico.
-
-    # Realizamos el search_read
-    records = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASSWORD,
-        odoo_model, 'search_read',
-        [domain],  # búsqueda con el dominio
-        {'fields': fields_to_read, 'limit': 10000}  # ejemplo: limit grande
-    )
-
-    # Ahora, por cada registro, consultamos su "mrp.production" (order_id) 
-    # para obtener company_executed, client, client_type y nombre de la orden.
-    # -------------------------------------------------------------------------
-    #   order_id => (id, "Nombre de la orden"?)
-    #   Pero necesitamos fields: ['name', 'order_number', 'client', 'client_type', 'company_executed']
-    #
-    # Sugerencia: si son muchos registros, conviene obtener primero todos los 'order_id' únicos,
-    # hacerles read_batch en mrp.production, y luego mapear. Abajo se muestra la forma simple (uno a uno).
-
-    # 1) recolectar IDs de order_id
-    order_ids = [rec['order_id'][0] for rec in records if rec.get('order_id')]
-    order_ids_unicos = list(set(order_ids))
-
-    # 2) leer en bloque la mrp.production
-    order_fields = ['name', 'order_number', 'client_type', 'client', 'company_executed']
-    orders_data = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASSWORD,
-        'mrp.production', 'search_read',
-        [[('id', 'in', order_ids_unicos)]],
-        {'fields': order_fields, 'limit': len(order_ids_unicos)}
-    )
-    # Creamos un dict {order_id: {...campos...}}
-    orders_dict = {od['id']: od for od in orders_data}
-
-    # Construimos la lista final unificada:
-    result_list = []
-
-    for r in records:
-        # Dependiendo del modelo, 'date' vendrá del campo "date_field"
-        record_date = r.get(date_field)
-
-        # Horas
-        if hours_field:
-            hrs = r.get(hours_field, 0.0)
-        else:
-            hrs = 0.0
-
-        # Monto (solo si facturación)
-        if amount_field:
-            amt = r.get(amount_field, 0.0)
-        else:
-            amt = 0.0
-
-        # execution_type => en so.execution / so.register
-        # en so.programming => no existe un "execution_type" como tal, 
-        #   podrías mapear "concept" o "status". 
-        #   Si te interesa un campo textual, ajústalo aquí.
-        exec_type = r.get('execution_type', '')
-        if selected_type == 'programacion':
-            # Podríamos usar concept o status
-            exec_type = r.get('concept', '')
-
-        # observation => so.register, so.execution lo tienen.
-        # en programacion no lo hay, podríamos poner `status` como "observación" 
-        obs = r.get('observation', '')
-        if selected_type == 'programacion':
-            obs = r.get('status', '')
-
-        # Leemos la order_id para extraer: name, client_type, client, company_executed
-        order_info = {}
-        if r.get('order_id'):
-            oid = r['order_id'][0]
-            order_info = orders_dict.get(oid, {})
-
-        # order_name => preferimos 'order_number' si existe, sino 'name'
-        order_name = order_info.get('order_number') or order_info.get('name', '')
-
-        # client_type => 'arl', 'delima', 'directo', etc.
-        ctype = order_info.get('client_type', '')
-
-        # client => Many2one
-        # Esto si te devuelve (id, name) en Odoo 14+ o si no, tendrás que hacer otra lectura
-        # Suponiendo que se guardó en la DB como (id)...
-        client_id = order_info.get('client', False)
-        client_name = ''
-        if isinstance(client_id, list) and len(client_id) == 2:
-            client_name = client_id[1]
-        # company => en la orden es "company_executed"
-        comp_id = order_info.get('company_executed', False)
-        company_name = ''
-        if isinstance(comp_id, list) and len(comp_id) == 2:
-            company_name = comp_id[1]
-
-        # executor => no lo tenemos en "so.common". Ajusta si existe un campo 'responsible_id' 
-        # o algo similar. En este ejemplo lo dejamos vacío:
-        executor_name = ''
-
-        result_list.append({
-            "date": record_date or "",  
-            "order_name": order_name,
-            "execution_type": exec_type,
-            "executor": executor_name, 
-            "hours_quantity": hrs,
-            "observation": obs,
-            "company": company_name,
-            "client": client_name,
-            "client_type": ctype,
-            "type": selected_type,
-            "amount": amt
-        })
-
-    # Convertimos a DataFrame
-    df = pd.DataFrame(result_list, columns=[
-        "date", "order_name", "execution_type", "executor", "hours_quantity",
-        "observation", "company", "client", "client_type", "type", "amount"
-    ])
-
-    # Opcional: convertir la columna "date" a datetime (si Odoo la retorna como string)
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-
-    return df
-
-
-def get_api_data_dummy(start_date, end_date, selected_type):
-    # Datos de ejemplo "hardcodeados" para simular la respuesta de la API
-    # Número de muestras
-    num_samples = 100
-
-    # Generar fechas entre el 1 de enero de 2025 y el 31 de marzo de 2025
-    dates = pd.date_range(start="2025-01-01", end="2025-03-31", freq='D')
-    sample_dates = np.random.choice(dates, size=num_samples)
-
-    # Crear la data de muestra
-    df = pd.DataFrame({
-        "date": sample_dates,
-        "order_name": [f"order_{i+1}" for i in range(num_samples)],
-        "execution_type": np.random.choice(["Tipo A", "Tipo B"], size=num_samples),
-        "executor": np.random.choice(["Psicologo 1", "Psicologo 2", "Psicologo 3"], size=num_samples),
-        "hours_quantity": np.random.randint(1, 10, size=num_samples),
-        "observation": np.random.choice(["Observacion 1", "Observacion 2", "Observacion 3"], size=num_samples),
-        "company": np.random.choice(["EmpresaA", "EmpresaB", "EmpresaC"], size=num_samples),
-        "client": np.random.choice(["Cliente1", "Cliente2", "Cliente3"], size=num_samples),
-        "client_type": np.random.choice(["ARL", "DIRECTO", "DELIMA"], size=num_samples),
-        "type": np.random.choice(["ejecucion", "programacion", "soportes", "facturacion"], size=num_samples),
-        "amount": np.random.randint(3000, 2000000)
-    })
-
-    # Convertir a datetime
-    df['date'] = pd.to_datetime(df['date'])
-
-    # --- Modificación solicitada ---
-    # Si el client_type es ARL, asigna a 'client' un valor aleatorio de [SURA, COLMENA, BOLIVAR]
-    mask_arl = (df['client_type'] == 'ARL')
-    df.loc[mask_arl, 'client'] = np.random.choice(["SURA", "COLMENA", "BOLIVAR"], size=mask_arl.sum())
-
-    # Filtrar los datos según el rango de fechas y el tipo seleccionado
-    df = df[(df['date'] >= pd.to_datetime(start_date)) & (df['date'] <= pd.to_datetime(end_date))]
-    df = df[df['type'] == selected_type]
-    return df
-
 def get_api_data(start_date, end_date, selected_type):
     # 1. Cargar el JSON local
     with open("data.json", "r", encoding="utf-8") as f:
@@ -309,14 +41,14 @@ def get_api_data(start_date, end_date, selected_type):
     # 2. Crear DataFrame
     df = pd.DataFrame(data_list)
 
-    # 3. Convertir 'date' a datetime con inferencia de formatos (fecha u hora)
-    df['date'] = pd.to_datetime(df['date'], infer_datetime_format=True, errors='coerce')
+    # 3. Convertir 'date' a datetime y normalizar (asignar 00:00:00 a todo)
+    #    así todas las filas tienen solo la parte de fecha (sin horas).
+    df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.normalize()
 
-    # 4. Filtrar rango de fechas
-    df = df[
-        (df['date'] >= pd.to_datetime(start_date)) &
-        (df['date'] <= pd.to_datetime(end_date))
-    ]
+    # 4. Filtrar rango de fechas (con las fechas normalizadas)
+    start_dt = pd.to_datetime(start_date)
+    end_dt   = pd.to_datetime(end_date)
+    df = df[(df['date'] >= start_dt) & (df['date'] <= end_dt)]
 
     # 5. Filtrar por tipo
     df = df[df['type'] == selected_type]
@@ -635,8 +367,8 @@ with tabs[2]:
     grouping_option_cli = st.radio("Agrupar en eje X por:", options=["Mes", "Cliente/Tipo"], key="group_cli")
     
     df_cli = get_api_data(start_date_cli, end_date_cli, selected_type_cli)
-    # Nueva columna: si client_type es "ARL", se usa el valor de client; si no, se usa client_type.
-    df_cli['group_client'] = df_cli.apply(lambda row: row['client'] if row['client_type'] == 'ARL' else row['client_type'], axis=1)
+    # Nueva columna: si client_type es "arl", se usa el valor de client; si no, se usa client_type.
+    df_cli['group_client'] = df_cli.apply(lambda row: row['client'] if row['client_type'] == 'arl' else row['client_type'], axis=1)
     # df_cli['month'] = df_cli['date'].dt.to_period('M').astype(str)
 
     df_cli['month'] = df['date'].dt.month.apply(lambda x: meses_es[x])
@@ -689,7 +421,7 @@ with tabs[2]:
         
         # Aplicamos la misma lógica de 'group_client'
         df_temp['group_client'] = df_temp.apply(
-            lambda row: row['client'] if row['client_type'] == 'ARL' else row['client_type'], 
+            lambda row: row['client'] if row['client_type'] == 'arl' else row['client_type'], 
             axis=1
         )
         
