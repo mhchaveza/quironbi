@@ -102,7 +102,7 @@ with tabs[0]:
         meta_value = 120
 
     # Subtítulo dinámico
-    st.subheader(f"Reporte de {selected_type}")
+    st.subheader(f"Reporte de {selected_type} por Psicólogo")
 
     # Selección de agrupación para el eje X
     grouping_option = st.radio("Agrupar en eje X por:", options=["Mes", "Psicólogo"])
@@ -203,7 +203,7 @@ with tabs[0]:
 
     # resumen de horas
     # --- Gráfica FINAL: Comparación de Totales por Tipo (programación, ejecución, soportes y facturación) ---
-    st.subheader("Distribución del progreso")
+    st.subheader("Gestión del servicio")
 
     # Definimos qué tipos vamos a graficar
     all_types = ['programacion', 'ejecucion', 'soportes', 'facturacion']
@@ -356,6 +356,24 @@ with tabs[1]:
     fig_final.update_traces(texttemplate='%{text}', textposition='outside')
     st.plotly_chart(fig_final)  
 
+    # -----------------------------------------------------------------
+    # NUEVO: Mostrar tabla con distribución de actividades si es 'ejecucion'
+    # -----------------------------------------------------------------
+    if selected_type_emp == "ejecucion":
+        st.subheader("Distribución de Actividades")
+        
+        # Agrupa por la columna que guarda la actividad (usualmente 'execution_type')
+        # y suma las horas correspondientes.
+        activity_distribution = (
+            df_emp.groupby('activity', dropna=False)['hours_quantity']
+            .sum()
+            .reset_index()
+        )
+        activity_distribution.columns = ["Tipo de Actividad", "Total de Horas"]
+
+        st.write("Tabla de distribución de actividades para la empresa seleccionada:")
+        st.dataframe(activity_distribution)
+
 
 # --------------------------------
 # Pestaña [2]: INDICADORES CLIENTE
@@ -399,7 +417,7 @@ with tabs[2]:
                           y=metric_col_cli,
                           color='group_client',
                           barmode='group',
-                          labels={metric_col_cli: f"Total ({metric_option_cli})", 'month': 'Mes'},
+                          labels={metric_col_cli: f"Total ({metric_option_cli})", 'month': 'Mes', 'group_client': 'Cliente'},
                           title=f"{metric_option_cli} Totales por Mes y Cliente/Tipo")
     else:
         grouped_cli = df_cli.groupby(['group_client', 'month'], as_index=False)[metric_col_cli].sum()
@@ -408,7 +426,7 @@ with tabs[2]:
                           y=metric_col_cli,
                           color='month',
                           barmode='group',
-                          labels={metric_col_cli: f"Total ({metric_option_cli})", 'group_client': 'Cliente/Tipo'},
+                          labels={metric_col_cli: f"Total ({metric_option_cli})", 'group_client': 'Cliente', 'month': 'Mes'},
                           title=f"{metric_option_cli} Totales por Cliente/Tipo y Mes")
     st.plotly_chart(fig1_cli)
     
