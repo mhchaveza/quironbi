@@ -33,7 +33,6 @@ meses_es = {
 # Diccionario de mapeo: Texto mostrado -> Valor real
 type_map = {
     "Ejecución": "ejecucion",
-    "Programación": "programacion",
     "Soportes": "soportes",
     "Facturación": "facturacion"
 }
@@ -86,8 +85,7 @@ with tabs[0]:
     end_date = st.date_input("Fecha fin", value=pd.to_datetime("2025-03-30"))
 
     # Selección del tipo
-    type_options = ['ejecucion', 'programacion', 'soportes', 'facturacion']
-    selected_display = st.selectbox("Tipo", type_options)
+    selected_display = st.selectbox("Tipo", list(type_map.keys()), key="type_exe")
     selected_type = type_map[selected_display]
     # Cuando es facturación, se habilita la opción de visualizar por Monto o Horas
     if selected_type == "facturacion":
@@ -143,7 +141,7 @@ with tabs[0]:
     st.plotly_chart(fig1)
 
     # --- Gráfica 2: Porcentaje respecto a la meta ---
-    grouped['percentage'] = 0.8 * grouped[metric_col] / meta_value * 100
+    grouped['percentage'] = grouped[metric_col] / meta_value * 100
     if grouping_option == "Mes":
         fig2 = px.bar(grouped, 
                     x='month', 
@@ -153,8 +151,8 @@ with tabs[0]:
                     text='percentage',
                     labels={'percentage': 'Porcentaje (%)', "month": "Mes", "executor": "Psicólogo"},
                     title=f"Porcentaje respecto al 80% de la meta ({meta_value}) por Mes y Psicólogo")
-        fig2.add_hline(y=100, line_dash="dot", 
-                        annotation_text="Meta 100%", annotation_position="top right")
+        fig2.add_hline(y=80, line_dash="dot", 
+                        annotation_text="Meta 80%", annotation_position="top right")
     else:
         fig2 = px.bar(grouped, 
                     x='executor', 
@@ -164,8 +162,8 @@ with tabs[0]:
                     text='percentage',
                     labels={'percentage': 'Porcentaje (%)', "executor": "Psicólogo", "month": "Mes"},
                     title=f"Porcentaje respecto a la meta ({meta_value}) por Psicólogo y Mes")
-        fig2.add_hline(y=100, line_dash="dot", 
-                        annotation_text="Meta 100%", annotation_position="top right")
+        fig2.add_hline(y=80, line_dash="dot", 
+                        annotation_text="Meta 80%", annotation_position="top right")
     fig2.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
     st.plotly_chart(fig2)
 
@@ -260,8 +258,7 @@ with tabs[1]:
     end_date_emp = st.date_input("Fecha fin", key="end_emp", value=pd.to_datetime("2025-03-30"))
     
     # 2) Tipo (con opción de ver Horas / Monto si es facturación)
-    type_options_emp = ['ejecucion', 'programacion', 'soportes', 'facturacion']
-    selected_display_emp = st.selectbox("Tipo", type_options_emp)
+    selected_display_emp = st.selectbox("Tipo", list(type_map.keys()), key="type_emp")
     selected_type_emp = type_map[selected_display_emp]
     
     if selected_type_emp == "facturacion":
@@ -368,8 +365,7 @@ with tabs[2]:
     start_date_cli = st.date_input("Fecha inicio", key="start_cli", value=pd.to_datetime("2025-01-01"))
     end_date_cli = st.date_input("Fecha fin", key="end_cli", value=pd.to_datetime("2025-03-30"))
     
-    type_options_cli = ['ejecucion', 'programacion', 'soportes', 'facturacion']
-    selected_display_cli = st.selectbox("Tipo", type_options_cli, key="type_cli")
+    selected_display_cli = st.selectbox("Tipo", list(type_map.keys()), key="type_cli")
     selected_type_cli = type_map[selected_display_cli]
 
     
