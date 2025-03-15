@@ -30,6 +30,15 @@ meses_es = {
     12: "Dic"
 }
 
+# Diccionario de mapeo: Texto mostrado -> Valor real
+type_map = {
+    "Ejecución": "ejecucion",
+    "Programación": "programacion",
+    "Soportes": "soportes",
+    "Facturación": "facturacion"
+}
+
+
 # Desactivamos la verificación SSL sólo si es necesario
 ssl_context = ssl._create_unverified_context()
 
@@ -53,6 +62,15 @@ def get_api_data(start_date, end_date, selected_type):
     # 5. Filtrar por tipo
     df = df[df['type'] == selected_type]
 
+        # 6. Omitir ciertos ejecutores
+    excluded_executors = [
+        "ACOSTA LEGUIZAMO MYRIAM SOFIA",
+        "LISCANO RAMIREZ ADRIANA LORENA",
+        "MESES APARICIO LEIDY JUDITH",
+        "MU\u00d1OZ RUIZ NURY TATIANA"
+    ]
+    df = df[~df['executor'].isin(excluded_executors)]
+
     return df
 
 
@@ -69,8 +87,8 @@ with tabs[0]:
 
     # Selección del tipo
     type_options = ['ejecucion', 'programacion', 'soportes', 'facturacion']
-    selected_type = st.selectbox("Tipo", type_options)
-
+    selected_display = st.selectbox("Tipo", type_options)
+    selected_type = type_map[selected_display]
     # Cuando es facturación, se habilita la opción de visualizar por Monto o Horas
     if selected_type == "facturacion":
         metric_option = st.radio("Ver por:", options=["Horas", "Monto"])
@@ -125,7 +143,7 @@ with tabs[0]:
     st.plotly_chart(fig1)
 
     # --- Gráfica 2: Porcentaje respecto a la meta ---
-    grouped['percentage'] = grouped[metric_col] / meta_value * 100
+    grouped['percentage'] = 0.8 * grouped[metric_col] / meta_value * 100
     if grouping_option == "Mes":
         fig2 = px.bar(grouped, 
                     x='month', 
@@ -133,8 +151,8 @@ with tabs[0]:
                     color='executor', 
                     barmode='group',
                     text='percentage',
-                    labels={'percentage': 'Porcentaje (%)', "month": "Mes"},
-                    title=f"Porcentaje respecto a la meta ({meta_value}) por Mes y Psicólogo")
+                    labels={'percentage': 'Porcentaje (%)', "month": "Mes", "executor": "Psicólogo"},
+                    title=f"Porcentaje respecto al 80% de la meta ({meta_value}) por Mes y Psicólogo")
         fig2.add_hline(y=100, line_dash="dot", 
                         annotation_text="Meta 100%", annotation_position="top right")
     else:
@@ -144,7 +162,7 @@ with tabs[0]:
                     color='month', 
                     barmode='group',
                     text='percentage',
-                    labels={'percentage': 'Porcentaje (%)', "executor": "Psicólogo"},
+                    labels={'percentage': 'Porcentaje (%)', "executor": "Psicólogo", "month": "Mes"},
                     title=f"Porcentaje respecto a la meta ({meta_value}) por Psicólogo y Mes")
         fig2.add_hline(y=100, line_dash="dot", 
                         annotation_text="Meta 100%", annotation_position="top right")
@@ -243,7 +261,8 @@ with tabs[1]:
     
     # 2) Tipo (con opción de ver Horas / Monto si es facturación)
     type_options_emp = ['ejecucion', 'programacion', 'soportes', 'facturacion']
-    selected_type_emp = st.selectbox("Tipo", type_options_emp, key="type_emp")
+    selected_display_emp = st.selectbox("Tipo", type_options_emp)
+    selected_type_emp = type_map[selected_display_emp]
     
     if selected_type_emp == "facturacion":
         metric_option_emp = st.radio("Ver por:", options=["Horas", "Monto"], key="radio_emp")
@@ -350,7 +369,9 @@ with tabs[2]:
     end_date_cli = st.date_input("Fecha fin", key="end_cli", value=pd.to_datetime("2025-03-30"))
     
     type_options_cli = ['ejecucion', 'programacion', 'soportes', 'facturacion']
-    selected_type_cli = st.selectbox("Tipo", type_options_cli, key="type_cli")
+    selected_display_cli = st.selectbox("Tipo", type_options_cli, key="type_cli")
+    selected_type_cli = type_map[selected_display_cli]
+
     
     # Cuando es facturación, se habilita la opción de visualizar por Monto o Horas
     if selected_type_cli == "facturacion":
