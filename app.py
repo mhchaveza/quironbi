@@ -7,6 +7,7 @@ import xmlrpc.client
 import pandas as pd
 import plotly.graph_objects as go
 import json
+import random
 
 
 ODOO_URL = 'https://quiron.centralus.cloudapp.azure.com/'  # o 'http://localhost:8069'
@@ -32,6 +33,8 @@ meses_es = {
 
 # Diccionario de mapeo: Texto mostrado -> Valor real
 type_map = {
+    "Asignación": "asignacion",
+    "Programación": "programacion",
     "Ejecución": "ejecucion",
     "Soportes": "soportes",
     "Facturación": "facturacion"
@@ -41,6 +44,11 @@ type_map = {
 # Desactivamos la verificación SSL sólo si es necesario
 ssl_context = ssl._create_unverified_context()
 
+
+import pandas as pd
+import json
+import random
+
 def get_api_data(start_date, end_date, selected_type):
     # 1. Cargar el JSON local
     with open("data.json", "r", encoding="utf-8") as f:
@@ -49,19 +57,18 @@ def get_api_data(start_date, end_date, selected_type):
     # 2. Crear DataFrame
     df = pd.DataFrame(data_list)
 
-    # 3. Convertir 'date' a datetime y normalizar (asignar 00:00:00 a todo)
-    #    así todas las filas tienen solo la parte de fecha (sin horas).
+    # 3. Convertir 'date' a datetime y normalizar
     df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.normalize()
 
-    # 4. Filtrar rango de fechas (con las fechas normalizadas)
+    # 4. Filtrar rango de fechas
     start_dt = pd.to_datetime(start_date)
-    end_dt   = pd.to_datetime(end_date)
+    end_dt = pd.to_datetime(end_date)
     df = df[(df['date'] >= start_dt) & (df['date'] <= end_dt)]
 
     # 5. Filtrar por tipo
     df = df[df['type'] == selected_type]
 
-        # 6. Omitir ciertos ejecutores
+    # 6. Omitir ciertos ejecutores
     excluded_executors = [
         "ACOSTA LEGUIZAMO MYRIAM SOFIA",
         "LISCANO RAMIREZ ADRIANA LORENA",
@@ -70,13 +77,121 @@ def get_api_data(start_date, end_date, selected_type):
     ]
     df = df[~df['executor'].isin(excluded_executors)]
 
+    # 🎩 Truquillo: Si order_name empieza con "PS", cámbialo a "QPPS"
+    df['order_name'] = df['order_name'].apply(lambda x: f"QPPS{x[2:]}" if x.startswith("PS") else x)
+
+    # 🎩 Truquillo extra: Si el tipo es 'ejecucion', agrega un campo 'activity' con un valor aleatorio
+    if selected_type == "ejecucion":
+        activities = [
+            "Asesoría al SVE psicosocial",
+            "Capacitación en comunicación asertiva",
+            "Capacitación en estilos de vida saludable",
+            "Asesoría al protocolo del comité de convivencia laboral"
+        ]
+        df['activity'] = df.apply(lambda _: random.choice(activities), axis=1)
+
     return df
 
 
-tabs = st.tabs(["Indicadores por Psicólogo", "Indicadores por Empresa", "Indicadores por Cliente"])
+tabs = st.tabs(["Indicadores de área","Indicadores por Psicólogo", "Indicadores por Empresa", "Indicadores por Cliente"])
 
+
+# Diccionario con códigos QPPS y su detalle
+QPPS_CODES = {
+    "QPPS-1001-RME": ("DESARROLLO Y TRANSFORMACIÓN DE EQUIPO", "REUNIONES MENSUALES DE EQUIPO", "ESTE CÓDIGO SE UTILIZARÁ PARA REPORTAR LAS HORAS EFECTIVAS DE CADA REUNIÓN MENSUAL DE EQUIPO QUE SE REALICE.", "NO"),
+    "QPPS-1002-RI": ("DESARROLLO Y TRANSFORMACIÓN DE EQUIPO", "REUNIONES INDIVIDUALES", "ESTE CÓDIGO SE UTILIZARÁ PARA REPORTAR LAS HORAS EFECTIVAS DE LAS REUNIONES QUE SE REALICEN CON LOS LÍDERES DEL ÁREA Y QUE SUPERE 1 HORA LA REUNIÓN", "NO"),
+    "QPPS-1003-CV": ("SERVICIO AL CLIENTE INTERNO", "CAFES VIRTUALES", "ESTE CÓDIGO SE UTILIZARÁ PARA REPORTAR LAS HORAS EFECTIVAS ÚNICAMENTE CUANDO LOS PROFESIONALES DEL ÁREA PARTICIPEN DE MANERA ACTIVA EN LOS CAFES MENSUALES", "SI"),
+    "QPPS-1004-DMI": ("DISEÑO DE PRODUCTOS", "DESARROLLO DE MATERIAL INTERNO Y DISEÑO DE PRODUCTOS", "ESTE CÓDIGO SE UTILIZARÁ PARA REPORTAR LAS HORAS EFECTIVAS RELACIONADAS AL DISEÑO Y/O REALIZACIÓN DE MATERIAL NUEVO", "SI"),
+    "QPPS-1005-AFI": ("DESARROLLO Y TRANSFORMACIÓN DE EQUIPO", "ACTUALIZACIÓN DE FORMATOS INTERNOS", "ESTE CÓDIGO SE UTILIZARÁ PARA REPORTAR LAS HORAS EFECTIVAS RELACIONADAS AL DISEÑO, ACTUALIZACIÓN Y/O REALIZACIÓN DE FORMATOS INTERNOS DEL ÁREA", "NO"),
+    "QPPS-1006-DML": ("DISEÑO DE PRODUCTOS", "DISEÑO DE PROPUESTAS, ASESORÍA, REUNIONES COMERCIALES Y MATERIAL PARA LATAM", "ESTE CÓDIGO SE UTILIZARÁ PARA REPORTAR LAS HORAS EFECTIVAS RELACIONADAS AL DISEÑO Y/O REALIZACIÓN DE MATERIAL NUEVO PARA EMPRESAS LATAM", "SI"),
+    "QPPS-1007-FE": ("DESARROLLO Y TRANSFORMACIÓN DE EQUIPO", "FORMACIÓN A EQUIPO PSICOSOCIAL", "ESTE CÓDIGO SE UTILIZARÁ PARA REPORTAR LAS HORAS EFECTIVAS RELACIONADAS A LOS ESPACIOS DE FORMACIÓN TÉCNICA", "NO"),
+    "QPPS-1008-GA": ("DESARROLLO Y TRANSFORMACIÓN DE EQUIPO", "GESTIÓN ADMINISTRATIVA - ORDENES DE SERVICIO Y FACTURACIÓN", "ESTE CÓDIGO SE UTILIZARÁ PARA REPORTAR LAS HORAS EFECTIVAS DE LA GESTIÓN ADMINISTRATIVA", "NO"),
+    "QPPS-1009-EJSMF": ("SERVICIO AL CLIENTE INTERNO", "ESTRATEGIA JUNTOS SOMOS MÁS FUERTES", "ESTE CÓDIGO SE UTILIZARÁ PARA REPORTAR LAS HORAS EFECTIVAS EN EL DESARROLLO DE MATERIAL PARA LA ESTRATEGIA", "SI"),
+}
 
 with tabs[0]:
+    st.title("INDICADORES DE ÁREA")
+
+    # Selección de fechas
+    start_date = st.date_input("Fecha inicio", value=pd.to_datetime("2025-01-01"), key="area_start")
+    end_date = st.date_input("Fecha fin", value=pd.to_datetime("2025-03-30"), key="area_end")
+
+    # --- Gráfica FINAL: Comparación de Totales por Tipo ---
+    st.subheader("Gestión del servicio")
+
+    all_types = ['asignacion', 'programacion', 'ejecucion', 'soportes', 'facturacion']
+    type_totals = {}
+
+    for t in all_types:
+        df_temp = get_api_data(start_date, end_date, t)
+        col_to_sum = 'hours_quantity'
+        total_val = df_temp[col_to_sum].sum()
+        type_totals[t.capitalize()] = total_val
+
+    df_type_totals = pd.DataFrame({
+        'Tipo': list(type_totals.keys()),
+        'Total': list(type_totals.values())
+    })
+
+    fig_final = px.bar(
+        df_type_totals, x='Tipo', y='Total', text='Total',
+        labels={'Tipo': 'Tipo', 'Total': 'Total'},
+        title='Comparativa de Tipos en el Rango Seleccionado'
+    )
+    fig_final.update_traces(texttemplate='%{text}', textposition='outside')
+    st.plotly_chart(fig_final, key="area_chart")  
+
+    # ==========================
+    # 🔹 Distribución Interna / Externa
+    # ==========================
+    st.subheader("Distribución de tareas internas/externas")
+
+    df_asignacion = get_api_data(start_date, end_date, "asignacion")
+    df_asignacion['internal'] = df_asignacion['order_name'].apply(lambda x: x.startswith('QPPS'))
+    
+    total_internal = df_asignacion[df_asignacion['internal']]['hours_quantity'].sum()
+    total_external = df_asignacion[~df_asignacion['internal']]['hours_quantity'].sum()
+
+    # Gráfico de pastel
+    df_pie = pd.DataFrame({
+        'Tipo': ['Internas (QPPS)', 'Externas'],
+        'Total': [total_internal, total_external]
+    })
+
+    fig_pie = px.pie(
+        df_pie, values='Total', names='Tipo', 
+        title="Distribución de Asignaciones"
+    )
+    st.plotly_chart(fig_pie)
+
+    # ==========================
+    # 🔹 Tabla Consolidada de Códigos QPPS
+    # ==========================
+    st.subheader("Consolidado de Actividades Internas (QPPS)")
+
+    df_qpps = df_asignacion[df_asignacion['order_name'].isin(QPPS_CODES.keys())]
+    
+    consolidated_data = []
+    for _, row in df_qpps.iterrows():
+        code = row['order_name']
+        categoria, actividad, nota, facturacion = QPPS_CODES.get(code, ("", "", "", ""))
+        consolidated_data.append({
+            "CATEGORÍA": categoria,
+            "NOMBRE ACTIVIDAD": actividad,
+            "NOTA": nota,
+            "CÓDIGO INTERNO": code,
+            "FACTURACIÓN INTERNA": facturacion,
+            "HORAS REPORTADAS": row['hours_quantity']
+        })
+
+    df_consolidado = pd.DataFrame(consolidated_data)
+
+    # Mostrar tabla en Streamlit
+    st.dataframe(df_consolidado)
+
+
+
+with tabs[1]:
 # Título de la página
     st.title("INDICADORES POR PSICÓLOGO")
 
@@ -206,7 +321,7 @@ with tabs[0]:
     st.subheader("Gestión del servicio")
 
     # Definimos qué tipos vamos a graficar
-    all_types = ['programacion', 'ejecucion', 'soportes', 'facturacion']
+    all_types = ['asignacion','programacion', 'ejecucion', 'soportes', 'facturacion']
 
     # Preparamos un diccionario para guardar las sumas de cada tipo
     type_totals = {}
@@ -250,7 +365,7 @@ with tabs[0]:
 # Pestaña [1]: POR EMPRESA
 # *** MODIFICADA ***
 # ---------------------------
-with tabs[1]:
+with tabs[2]:
     st.title("REPORTES POR EMPRESA")
     
     # 1) Fecha inicio/fin
@@ -318,7 +433,7 @@ with tabs[1]:
     st.subheader("Distribución del progreso")
 
     # Definimos qué tipos vamos a graficar
-    all_types = ['programacion', 'ejecucion', 'soportes', 'facturacion']
+    all_types = ['asignacion','programacion', 'ejecucion', 'soportes', 'facturacion']
 
     # Preparamos un diccionario para guardar las sumas de cada tipo
     type_totals = {}
@@ -378,7 +493,7 @@ with tabs[1]:
 # --------------------------------
 # Pestaña [2]: INDICADORES CLIENTE
 # --------------------------------
-with tabs[2]:
+with tabs[3]:
     st.title("INDICADORES POR CLIENTE")
     start_date_cli = st.date_input("Fecha inicio", key="start_cli", value=pd.to_datetime("2025-01-01"))
     end_date_cli = st.date_input("Fecha fin", key="end_cli", value=pd.to_datetime("2025-03-30"))
@@ -445,7 +560,7 @@ with tabs[2]:
     st.subheader("Comparación de Totales (Programación, Ejecución, Soportes, Facturación) por Cliente")
 
     # 1) Definimos la lista de tipos a comparar
-    tipos = ['programacion', 'ejecucion', 'soportes', 'facturacion']
+    tipos = ['asignacion','programacion', 'ejecucion', 'soportes', 'facturacion']
 
     # 2) Creamos una lista para ir acumulando los DF individuales
     dfs_list = []
