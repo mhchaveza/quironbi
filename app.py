@@ -34,7 +34,7 @@ meses_es = {
 # Diccionario de mapeo: Texto mostrado -> Valor real
 type_map = {
     "Asignación": "asignacion",
-    "Programación": "programacion",
+    #"Programación": "programacion",
     "Ejecución": "ejecucion",
     "Soportes": "soportes",
     "Facturación": "facturacion"
@@ -119,7 +119,7 @@ with tabs[0]:
     # --- Gráfica FINAL: Comparación de Totales por Tipo ---
     st.subheader("Gestión del servicio")
 
-    all_types = ['asignacion', 'programacion', 'ejecucion', 'soportes', 'facturacion']
+    all_types = ['asignacion', 'ejecucion', 'soportes', 'facturacion']
     type_totals = {}
 
     for t in all_types:
@@ -178,7 +178,6 @@ with tabs[0]:
         consolidated_data.append({
             "CATEGORÍA": categoria,
             "NOMBRE ACTIVIDAD": actividad,
-            "NOTA": nota,
             "CÓDIGO INTERNO": code,
             "FACTURACIÓN INTERNA": facturacion,
             "HORAS REPORTADAS": row['hours_quantity']
@@ -188,6 +187,21 @@ with tabs[0]:
 
     # Mostrar tabla en Streamlit
     st.dataframe(df_consolidado)
+
+    # month by mont QPPS activities by category
+
+    st.subheader("Actividades QPPS por mes")
+    df_qpps['month'] = df_qpps['date'].dt.month.apply(lambda x: meses_es[x])
+    df_qpps['year'] = df_qpps['date'].dt.year
+    df_qpps['month_year'] = df_qpps['date'].dt.to_period('M').astype(str)
+    grouped_qpps = df_qpps.groupby(['month_year', 'order_name'], as_index=False)['hours_quantity'].sum()
+
+    fig_qpps = px.bar(grouped_qpps, x='month_year', y='hours_quantity', color='order_name', barmode='group',
+                        labels={'hours_quantity': 'Total (Horas)', 'month_year': 'Mes', 'order_name': 'Actividad'},
+                        title='Actividades QPPS por mes')
+    
+    st.plotly_chart(fig_qpps)
+
 
 
 
@@ -283,9 +297,9 @@ with tabs[1]:
     st.plotly_chart(fig2)
 
     meta_data = [
-        {'month': 'Ene', 'meta': 100},  # O "2025-01" si tu mes está en ese formato
-        {'month': 'Feb', 'meta': 120},
-        {'month': 'Mar', 'meta': 110},
+        {'month': 'Ene', 'meta': 700},  # O "2025-01" si tu mes está en ese formato
+        {'month': 'Feb', 'meta': 800},
+        {'month': 'Mar', 'meta': 700},
     # Agrega más filas si tienes más meses
     ]
     meta_df = pd.DataFrame(meta_data)
@@ -321,7 +335,7 @@ with tabs[1]:
     st.subheader("Gestión del servicio")
 
     # Definimos qué tipos vamos a graficar
-    all_types = ['asignacion','programacion', 'ejecucion', 'soportes', 'facturacion']
+    all_types = ['asignacion','ejecucion', 'soportes', 'facturacion']
 
     # Preparamos un diccionario para guardar las sumas de cada tipo
     type_totals = {}
@@ -355,6 +369,7 @@ with tabs[1]:
     )
     fig_final.update_traces(texttemplate='%{text}', textposition='outside')
     st.plotly_chart(fig_final)  
+
 
 
 
@@ -433,7 +448,7 @@ with tabs[2]:
     st.subheader("Distribución del progreso")
 
     # Definimos qué tipos vamos a graficar
-    all_types = ['asignacion','programacion', 'ejecucion', 'soportes', 'facturacion']
+    all_types = ['asignacion','ejecucion', 'soportes', 'facturacion']
 
     # Preparamos un diccionario para guardar las sumas de cada tipo
     type_totals = {}
@@ -560,7 +575,7 @@ with tabs[3]:
     st.subheader("Comparación de Totales (Programación, Ejecución, Soportes, Facturación) por Cliente")
 
     # 1) Definimos la lista de tipos a comparar
-    tipos = ['asignacion','programacion', 'ejecucion', 'soportes', 'facturacion']
+    tipos = ['asignacion','ejecucion', 'soportes', 'facturacion']
 
     # 2) Creamos una lista para ir acumulando los DF individuales
     dfs_list = []
